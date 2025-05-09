@@ -2,7 +2,9 @@ import numpy as np
 from astropy.timeseries import LombScargle, TimeSeries, LombScargleMultiband
 from astropy.time import Time
 import astropy.units as u
-from . import utils
+# from . import utils
+from query import *
+import utils
 
 # Data Lab
 from dl import authClient as ac, queryClient as qc
@@ -30,7 +32,7 @@ class Variable:
         Data release from which the data comes from, or where it should be taken from. Default is DR2.
     """
     
-    def __init__(self, objid, period=None, variclass=None, timeseries=None, datarelease="dr2"):
+    def __init__(self, objid, period=None, variclass=None, timeseries=None, datarelease="dr2", catalog="NSC"):
         """ 
         Initialize the Star object. If data for the time series is not given, then
         get it from Datalab.
@@ -41,6 +43,7 @@ class Variable:
         self.objid = objid
         self.period = period
         self.variclass = variclass
+        self.catalog = catalog
         self.datarelease = datarelease
         if timeseries is None:
             self.timeseries = self.get_timeseries_data()
@@ -61,20 +64,80 @@ class Variable:
         """
         
         if datarelease==None: datarelease = self.datarelease
-        
-        if datarelease=='dr2' or datarelease=='dr1' or datarelease=='DR2' or datarelease=='DR1':
-            mag_name = 'mag_auto'
-            magerr_name = 'magerr_auto'
-        else:
-            mag_name = 'mag'
-            magerr_name = 'magerr'
-        
-        query = f"""SELECT m.mjd,m.{mag_name},m.{magerr_name},m.filter,e.exptime 
-                FROM nsc_dr2.meas AS m JOIN nsc_dr2.exposure as e ON m.exposure=e.exposure
-                WHERE m.objectid='{self.objid}'"""
-        # f"SELECT mjd,{mag_name},{magerr_name},filter FROM nsc_{datarelease}.meas WHERE objectid='{self.objid}'"
-        table_res = qc.query(query,fmt='table')
-        timeseries_obj = TimeSeries(data=[table_res[mag_name],table_res[magerr_name],table_res['filter'],table_res['exptime']],time=Time(table_res['mjd'], format='mjd'))
+
+        if self.catalog =="NSC":
+            if datarelease=='dr2' or datarelease=='dr1' or datarelease=='DR2' or datarelease=='DR1':
+                mag_name = 'mag_auto'
+                magerr_name = 'magerr_auto'
+            else:
+                mag_name = 'mag'
+                magerr_name = 'magerr'
+            
+            query = f"""SELECT m.mjd,m.{mag_name},m.{magerr_name},m.filter,e.exptime 
+                    FROM nsc_dr2.meas AS m JOIN nsc_dr2.exposure as e ON m.exposure=e.exposure
+                    WHERE m.objectid='{self.objid}'"""
+            # f"SELECT mjd,{mag_name},{magerr_name},filter FROM nsc_{datarelease}.meas WHERE objectid='{self.objid}'"
+            table_res = qc.query(query,fmt='table')
+            timeseries_obj = TimeSeries(data={'mag':table_res[mag_name],'mag_err':table_res[magerr_name],'filter':table_res['filter'],'exptime':table_res['exptime']},time=Time(table_res['mjd'], format='mjd'))
+            
+        elif self.catalog=="Gaia":
+            latest_gaia_release = "DR3"
+            if datarelease=="dr3" or datarelease=="dr1" or datarelease=="DR1":
+                datarelease==latest_gaia_release
+            elif datarelease=="dr2":
+                datarelease=="DR2"
+            
+            table_res = gaialc(int(self.objid),release=datarelease)
+            table_res = table_res[table_res['rejected_by_photometry']==False]
+            
+            if datarelease=="DR3":
+                mag_g_name = 'g_transit_mag'
+                mag_bp_name = 'bp_mag'
+                mag_rp_name = 'rp_mag'
+                g_flux_error_name = 'g_transit_flux_over_error'
+                bp_flux_error_name = 'bp_flux_over_error'
+                rp_flux_error_name = 'rp_flux_over_error'
+                g_time_name = 'g_transit_time'
+                bp_time_name = 'bp_obs_time'
+                rp_time_name = 'rp_obs_time'
+                # Mags
+                g_mask = ~table_res[mag_g_name].mask
+                g_mag = table_res[mag_g_name][g_mask]
+                bp_mask = ~table_res[mag_bp_name].mask
+                bp_mag = table_res[mag_bp_name][bp_mask]
+                rp_mask = ~table_res[mag_rp_name].mask
+                rp_mag = table_res[mag_rp_name][rp_mask]
+                mags = np.hstack([g_mag,bp_mag,rp_mag])
+                #print(mags)
+                # Mag_errs
+                g_mag_err = 1.0857362047581294/table_res[g_flux_error_name][g_mask]
+                bp_mag_err = 1.0857362047581294/table_res[bp_flux_error_name][bp_mask]
+                rp_mag_err = 1.0857362047581294/table_res[rp_flux_error_name][rp_mask]
+                mag_err = np.hstack([g_mag_err,bp_mag_err,rp_mag_err])
+                # Bands
+                gs = np.array(['G' for x in range(len(g_mag))],dtype=str)
+                bps = np.array(['BP' for x in range(len(bp_mag))],dtype=str)
+                rps = np.array(['RP' for x in range(len(rp_mag))],dtype=str)
+                filters = np.hstack([gs,bps,rps])
+                # Times
+                #print(table_res)
+                times = np.hstack([table_res[g_time_name][g_mask],table_res[bp_time_name][bp_mask],table_res[rp_time_name][rp_mask]])
+                #print(times)
+                
+                
+            elif datarelease=="DR2":
+                mag_name = 'mag'
+                flux_error_name = 'flux_over_error'
+                time_name = 'time'
+                filter_name = 'band'
+                filters = table_res[filter_name]
+                mags = table_res[mag_name]
+                mag_err = 1.0857362047581294/table_res[flux_error_name]
+                times = table_res[time_name]
+            
+            
+            timeseries_obj = TimeSeries(data={'mag':mags,'mag_err':mag_err,'filter':filters}, 
+                                        time=Time(times+2455197.5, format='jd', scale='tcb'))
         
         return timeseries_obj
          
@@ -166,14 +229,14 @@ class Variable:
         if maximum_frequency is None or minimum_frequency is None:
             minimum_frequency, maximum_frequency = self.franges()
         
-        if self.datarelease=='dr1' or self.datarelease=='dr2':
-            mags = self.timeseries['mag_auto']
-            mags_errs = self.timeseries['magerr_auto']
-        else:
-            mags = self.timeseries['mag']
-            mags_errs = self.timeseries['magerr']
+        # if self.datarelease=='dr1' or self.datarelease=='dr2':
+        #     mags = self.timeseries['mag_auto']
+        #     mags_errs = self.timeseries['magerr_auto']
+        # else:
+        #     mags = self.timeseries['mag']
+        #     mags_errs = self.timeseries['magerr']
         
-        frequency, power = LombScargleMultiband(self.timeseries['time'],mags,self.timeseries['filter'],dy=mags_errs).autopower(
+        frequency, power = LombScargleMultiband(self.timeseries['time'],self.timeseries['mag'],self.timeseries['filter'],dy=self.timeseries['mag_err']).autopower(
             method=method,
             normalization=normalization,
             minimum_frequency=minimum_frequency,
@@ -195,22 +258,25 @@ class Variable:
             Power for the corresponding frequencies.
         """
         
-        if band==None:
-            band = utils.most_frequent(self.timeseries['filter'])
-        
-        selection = self.timeseries[self.timeseries['filter']==band]
         
         if maximum_frequency is None or minimum_frequency is None:
             minimum_frequency, maximum_frequency = self.franges()
-        
-        if self.datarelease=='dr1' or self.datarelease=='dr2':
-            mags = selection['mag_auto']
-            mags_errs = selection['magerr_auto']
-        else:
-            mags = selection['mag']
-            mags_errs = selection['magerr']
+
+        # if self.catalog=="NSC":
+        if band==None:
+            band = utils.most_frequent(self.timeseries['filter'])
+    
+        selection = self.timeseries[self.timeseries['filter']==band]
             
-        frequency, power = LombScargle(selection['time'],mags,dy=mags_errs).autopower(
+            # if self.datarelease=='dr1' or self.datarelease=='dr2':
+            #     mags = selection['mag_auto']
+            #     mags_errs = selection['magerr_auto']
+            # else:
+            #     mags = selection['mag']
+            #     mags_errs = selection['magerr']
+
+            
+        frequency, power = LombScargle(selection['time'],selection['mag'],dy=selection['mag_err']).autopower(
             method=method,
             normalization=normalization,
             minimum_frequency=minimum_frequency,
@@ -284,7 +350,7 @@ class Variable:
         if period==None: period = self.period
         
         try:
-            phase = utils.phase_fold(self.timeseries['mjd'], period)
+            phase = utils.phase_fold(self.timeseries['time'], period)
         except:
             print('The star has no calculated period.')
             return None

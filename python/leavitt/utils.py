@@ -16,6 +16,7 @@ import numpy as np
 import warnings
 from astropy.io import fits
 from astropy.table import Table, Column
+from astropy.time import Time
 from astropy import modeling
 from astropy.convolution import Gaussian1DKernel, convolve
 from glob import glob
@@ -1493,3 +1494,22 @@ def most_frequent(array, return_counts = False):
         return unique[index], counts[index]
     else:
         return unique[index]
+
+def time_gaia_2_mjd(gaia_time):
+    '''
+    Tranform time in Gaia internal reference system to Modified Julian Date (MJD).
+
+    Parameters
+    ----------
+    gaia_time: float or array-like
+        Time in internal Gaia units.
+
+    Returns
+    -------
+    mjd: float or array-like
+        Time in MJD.
+    '''
+
+    tcb_time = gaia_time+2455197.5 #days
+    time = Time(tcb_time,scale='tcb',format='jd')
+    return time.utc
