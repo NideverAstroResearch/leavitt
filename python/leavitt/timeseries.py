@@ -3,7 +3,7 @@ from astropy.timeseries import LombScargle, TimeSeries, LombScargleMultiband
 from astropy.time import Time
 import astropy.units as u
 # from . import utils
-from query import *
+from leavitt.query import *
 import utils
 
 # Data Lab
