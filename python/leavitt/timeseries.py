@@ -4,7 +4,7 @@ from astropy.time import Time
 import astropy.units as u
 # from . import utils
 from leavitt.query import *
-import utils
+from leavitt.utils import *
 
 # Data Lab
 from dl import authClient as ac, queryClient as qc
