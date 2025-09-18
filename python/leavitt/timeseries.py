@@ -66,7 +66,7 @@ class Variable:
         if datarelease==None: datarelease = self.datarelease
 
         if self.catalog =="NSC":
-            if datarelease=='dr2' or datarelease=='dr1' or datarelease=='DR2' or datarelease=='DR1':
+            if datarelease.lower()=='dr2' or datarelease.lower()=='dr1':
                 mag_name = 'mag_auto'
                 magerr_name = 'magerr_auto'
             else:
@@ -83,10 +83,10 @@ class Variable:
         elif self.catalog=="Gaia":
             latest_gaia_release = "DR3"
             if datarelease=="dr3" or datarelease=="dr1" or datarelease=="DR1":
-                datarelease==latest_gaia_release
+                datarelease = latest_gaia_release
             elif datarelease=="dr2":
-                datarelease=="DR2"
-            
+                datarelease = "DR2"
+                
             table_res = gaialc(int(self.objid),release=datarelease)
             table_res = table_res[table_res['rejected_by_photometry']==False]
             
@@ -134,7 +134,9 @@ class Variable:
                 mags = table_res[mag_name]
                 mag_err = 1.0857362047581294/table_res[flux_error_name]
                 times = table_res[time_name]
-            
+            else:
+                raise ValueError(datarelease+" not supported")
+                
             
             timeseries_obj = TimeSeries(data={'mag':mags,'mag_err':mag_err,'filter':filters}, 
                                         time=Time(times+2455197.5, format='jd', scale='tcb'))

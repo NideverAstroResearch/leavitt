@@ -20,7 +20,7 @@ def gaialc(source_id,release='dr3'):
                               retrieval_type=retrieval_type,
                               data_structure=data_structure)
     if len(datalink)==0:
-        return []
+        raise Exception('Nothing returned')
     tab = datalink[list(datalink.keys())[0]][0]
     tab = Table(tab.array)
     return tab
