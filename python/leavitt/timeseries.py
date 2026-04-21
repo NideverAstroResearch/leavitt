@@ -1,10 +1,11 @@
 import numpy as np
-from astropy.timeseries import LombScargle, TimeSeries, LombScargleMultiband
+from astropy.timeseries import TimeSeries
 from astropy.time import Time
 import astropy.units as u
-# from . import utils
 from leavitt.query import *
 from leavitt.utils import *
+from leavitt import utils
+from leavitt import periodograms
 
 # Data Lab
 from dl import authClient as ac, queryClient as qc
@@ -194,149 +195,69 @@ class Variable:
         
     
     def frequency_array(self, nbins=100, minimum_frequency=None, maximum_frequency=None):
-        '''
-        Function to define the frequency array used for calculating the 
-        different periodograms. It looks for information on whether the 
-        suspected variable has a long or short period to define the 
-        frequency ranges.
-        
-        Returns:
-        --------
-        farray: Time array
-            Array of frequencies (in 1/days, default).
-        
-        '''
-        
-        if maximum_frequency is None or minimum_frequency is None:
-            min_freq, max_freq = franges()
-        
-        farray = np.linspace(min_freq, max_freq, nbins)
-        
-        return farray
+        """Return a linear frequency array spanning the star's expected frequency range."""
+        if minimum_frequency is None or maximum_frequency is None:
+            minimum_frequency, maximum_frequency = self.franges()
+        return periodograms.frequency_array(minimum_frequency, maximum_frequency, nbins)
         
         
     def ls_mb_periodogram(self, method='flexible', normalization='standard', minimum_frequency=None, maximum_frequency=None):
         """
-        Calculates a multi-band Lomb-Scargle periodogram 
+        Calculates a multi-band Lomb-Scargle periodogram
         based on the data stored in timeseries.
-        
+
         Returns
         -------
         frequency : ndarray
-            Frequencies for the periodogram.
         power : ndarray
-            Power for the corresponding frequencies.
         """
-
-        if maximum_frequency is None or minimum_frequency is None:
+        if minimum_frequency is None or maximum_frequency is None:
             minimum_frequency, maximum_frequency = self.franges()
-        
-        # if self.datarelease=='dr1' or self.datarelease=='dr2':
-        #     mags = self.timeseries['mag_auto']
-        #     mags_errs = self.timeseries['magerr_auto']
-        # else:
-        #     mags = self.timeseries['mag']
-        #     mags_errs = self.timeseries['magerr']
-        
-        frequency, power = LombScargleMultiband(self.timeseries['time'],self.timeseries['mag'],self.timeseries['filter'],dy=self.timeseries['mag_err']).autopower(
-            method=method,
-            normalization=normalization,
-            minimum_frequency=minimum_frequency,
-            maximum_frequency=maximum_frequency
-            )
-        
-        return frequency, power
+        return periodograms.ls_mb_periodogram(
+            self.timeseries['time'], self.timeseries['mag'],
+            self.timeseries['filter'], self.timeseries['mag_err'],
+            minimum_frequency, maximum_frequency,
+            method=method, normalization=normalization,
+        )
     
     def ls_periodogram(self, band=None, method='flexible', normalization='standard', minimum_frequency=None, maximum_frequency=None):
         """
-        Calculates a Lomb-Scargle periodogram for a single
-        band, based on the data stored in timeseries.
-        
-        Returns
-        -------
-        frequency : ndarray
-            Frequencies for the periodogram.
-        power : ndarray
-            Power for the corresponding frequencies.
-        """
-        
-        
-        if maximum_frequency is None or minimum_frequency is None:
-            minimum_frequency, maximum_frequency = self.franges()
-
-        # if self.catalog=="NSC":
-        if band==None:
-            band = utils.most_frequent(self.timeseries['filter'])
-    
-        selection = self.timeseries[self.timeseries['filter']==band]
-            
-            # if self.datarelease=='dr1' or self.datarelease=='dr2':
-            #     mags = selection['mag_auto']
-            #     mags_errs = selection['magerr_auto']
-            # else:
-            #     mags = selection['mag']
-            #     mags_errs = selection['magerr']
-
-            
-        frequency, power = LombScargle(selection['time'],selection['mag'],dy=selection['mag_err']).autopower(
-            method=method,
-            normalization=normalization,
-            minimum_frequency=minimum_frequency,
-            maximum_frequency=maximum_frequency
-            )
-        
-        return frequency, power
-
-    
-    def lk_periodogram(self, minimum_frequency=None, maximum_frequency=None):
-        '''
-        Calculates a Lafler-Kinman periodogram for a single band, 
+        Calculates a Lomb-Scargle periodogram for a single band,
         based on the data stored in timeseries.
-        
+
         Returns
         -------
         frequency : ndarray
-            Frequencies for the periodogram.
         power : ndarray
-            Power for the corresponding frequencies.
-        '''
-        
-        if maximum_frequency is None or minimum_frequency is None:
+        """
+        if minimum_frequency is None or maximum_frequency is None:
             minimum_frequency, maximum_frequency = self.franges()
-        farray = frequency_array(minimum_frequency, maximum_frequency)
-        parray = 1./farray
-        
-        tobs = self.timeseries['time']
-        if self.datarelease=='dr1' or self.datarelease=='dr2':
-            mags = self.timeseries['mag_auto']
-        else:
-            mags = self.timeseries['mag']
-        
-        t0 = np.min(tobs)
-        tt = tobs - t0
-        theta = np.zeros_like(parray)
-        mmplus_km = np.zeros_like(mags)
-        avm_km = np.sum(mags)/len(mags) 
-        denom_km = np.sum( (mags-avm_km)**2 )
-        m = len(parray)
-        for k in range(m):
-            period = parray[k]
-            phi = tt / period
-            #nphi = np.fix(phi)          #KJM: literal but slower
-            nphi = phi.astype(np.int64)  #KJM: ~25% faster
-            phi = phi - nphi
-            ss = np.argsort(phi)  #KJM: BEWARE the IDL sort gotcha!
-            mm  = mags[ss]
-            #mmplus = np.append(mm[1:], mm[0])   #KJM: literal but slower
-            #numer = np.sum( (mmplus - mm)**2 )  #KJM: uses mmplus
-            mmplus_km[:-1] = mm[1:]  #KJM: Don't use np.append within loops!
-            mmplus_km[-1] = mm[0]    #KJM: Don't use np.append within loops!
-            #assert np.allclose(mmplus,mmplus_km)  #KJM: NUM? ME VEXO?
-            numer = np.sum( (mmplus_km - mm)**2 )  #KJM: uses mmplus_km
-            #KJM: using mmplus_km is ~24% faster
-            theta[k] = numer/denom_km
-        
-        return theta, phi
+        if band is None:
+            band = utils.most_frequent(self.timeseries['filter'])
+        sel = self.timeseries[self.timeseries['filter'] == band]
+        return periodograms.ls_periodogram(
+            sel['time'], sel['mag'], sel['mag_err'],
+            minimum_frequency, maximum_frequency,
+            method=method, normalization=normalization,
+        )
+
+    
+    def lk_periodogram(self, minimum_frequency=None, maximum_frequency=None, nbins=100):
+        """
+        Calculates a Lafler-Kinman periodogram based on the data stored in timeseries.
+
+        Returns
+        -------
+        frequency : ndarray
+        theta : ndarray
+            LK statistic at each frequency (lower = better period).
+        """
+        if minimum_frequency is None or maximum_frequency is None:
+            minimum_frequency, maximum_frequency = self.franges()
+        return periodograms.lk_periodogram(
+            self.timeseries['time'], self.timeseries['mag'],
+            minimum_frequency, maximum_frequency, nbins=nbins,
+        )
     
     
     def get_folded_ts(self, period=None):

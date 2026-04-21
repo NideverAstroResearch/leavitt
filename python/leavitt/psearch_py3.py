@@ -984,7 +984,7 @@ def table_psi_kjm_py( xx=None, yy=None, ee=None, n=None):
     assert (yy.shape == xx_shape)
     assert isinstance(ee,np.ndarray)
     assert (ee.shape == xx_shape)
-    assert isinstance(n,np.int)
+    assert isinstance(n,int)
     assert (n >= 1)
     sz = len(xx)
     lm_x = np.zeros(sz)
@@ -1364,6 +1364,7 @@ def plot_absdiff_py( fy0_p, fy1_p, title_p ):
     ax.set_xlabel( 'Frequency bins' )
     ax.set_title( title_p )
     plt.show()
+    plt.close()
     print('\n====================')
 
 
