@@ -1,6 +1,7 @@
 import numpy as np
 from astropy.timeseries import TimeSeries
 from astropy.time import Time
+from astropy.stats import sigma_clip as astropy_sigma_clip
 import astropy.units as u
 from leavitt.query import *
 from leavitt.utils import *
@@ -33,7 +34,7 @@ class Variable:
         Data release from which the data comes from, or where it should be taken from. Default is DR2.
     """
     
-    def __init__(self, objid, period=None, variclass=None, timeseries=None, datarelease="dr2", catalog="NSC"):
+    def __init__(self, objid, period=None, variclass=None, timeseries=None, datarelease="dr2", catalog="NSC", sigma=3.0):
         """ 
         Initialize the Star object. If data for the time series is not given, then
         get it from Datalab.
@@ -46,6 +47,7 @@ class Variable:
         self.variclass = variclass
         self.catalog = catalog
         self.datarelease = datarelease
+        self.sigma = sigma
         if timeseries is None:
             self.timeseries = self.get_timeseries_data()
         else:
@@ -194,6 +196,22 @@ class Variable:
         return minimum_frequency, maximum_frequency
         
     
+    def _clean_timeseries(self):
+        """Return a sigma-clipped view of the timeseries.
+
+        Clipping is applied per band using ``self.sigma``.  If ``self.sigma``
+        is None, the full timeseries is returned unchanged.
+        """
+        if self.sigma is None:
+            return self.timeseries
+        ts = self.timeseries
+        keep = np.ones(len(ts), dtype=bool)
+        for band in np.unique(ts['filter']):
+            idx = np.where(np.asarray(ts['filter']) == band)[0]
+            clipped = astropy_sigma_clip(np.asarray(ts['mag'][idx]), sigma=self.sigma)
+            keep[idx[clipped.mask]] = False
+        return ts[keep]
+
     def frequency_array(self, nbins=100, minimum_frequency=None, maximum_frequency=None):
         """Return a linear frequency array spanning the star's expected frequency range."""
         if minimum_frequency is None or maximum_frequency is None:
@@ -213,14 +231,15 @@ class Variable:
         """
         if minimum_frequency is None or maximum_frequency is None:
             minimum_frequency, maximum_frequency = self.franges()
+        ts = self._clean_timeseries()
         return periodograms.ls_mb_periodogram(
-            self.timeseries['time'], self.timeseries['mag'],
-            self.timeseries['filter'], self.timeseries['mag_err'],
+            ts['time'], ts['mag'],
+            ts['filter'], ts['mag_err'],
             minimum_frequency, maximum_frequency,
             method=method, normalization=normalization,
         )
     
-    def ls_periodogram(self, band=None, method='flexible', normalization='standard', minimum_frequency=None, maximum_frequency=None):
+    def ls_periodogram(self, band=None, method='auto', normalization='standard', minimum_frequency=None, maximum_frequency=None):
         """
         Calculates a Lomb-Scargle periodogram for a single band,
         based on the data stored in timeseries.
@@ -232,9 +251,10 @@ class Variable:
         """
         if minimum_frequency is None or maximum_frequency is None:
             minimum_frequency, maximum_frequency = self.franges()
+        ts = self._clean_timeseries()
         if band is None:
-            band = utils.most_frequent(self.timeseries['filter'])
-        sel = self.timeseries[self.timeseries['filter'] == band]
+            band = utils.most_frequent(ts['filter'])
+        sel = ts[np.asarray(ts['filter']) == band]
         return periodograms.ls_periodogram(
             sel['time'], sel['mag'], sel['mag_err'],
             minimum_frequency, maximum_frequency,
@@ -242,6 +262,26 @@ class Variable:
         )
 
     
+    def psi_periodogram(self, minimum_frequency=None, maximum_frequency=None, nbins=100):
+        """
+        Calculates the Psi hybrid periodogram (Saha & Vivas 2017) combining
+        multi-band Lomb-Scargle and Lafler-Kinman on a shared frequency grid.
+
+        Returns
+        -------
+        frequency : ndarray
+        psi : ndarray
+            Psi statistic at each frequency (higher = better period).
+        """
+        if minimum_frequency is None or maximum_frequency is None:
+            minimum_frequency, maximum_frequency = self.franges()
+        ts = self._clean_timeseries()
+        return periodograms.psi_periodogram(
+            ts.time.mjd, ts['mag'],
+            ts['filter'], ts['mag_err'],
+            minimum_frequency, maximum_frequency, nbins=nbins,
+        )
+
     def lk_periodogram(self, minimum_frequency=None, maximum_frequency=None, nbins=100):
         """
         Calculates a Lafler-Kinman periodogram based on the data stored in timeseries.
@@ -254,8 +294,9 @@ class Variable:
         """
         if minimum_frequency is None or maximum_frequency is None:
             minimum_frequency, maximum_frequency = self.franges()
+        ts = self._clean_timeseries()
         return periodograms.lk_periodogram(
-            self.timeseries['time'], self.timeseries['mag'],
+            ts.time.mjd, ts['mag'],
             minimum_frequency, maximum_frequency, nbins=nbins,
         )
     
@@ -280,33 +321,46 @@ class Variable:
             
         return phase
     
-    def get_period(self, frequency, power):
+    def get_period(self, statistic='hybrid', nbins=1000,
+                   minimum_frequency=None, maximum_frequency=None):
         """
-        Returns the most likely period for the given periodogram.
-        Looks for the absolute maximum in the periodogram. It also 
-        sets the period attribute for the Class.
-        
+        Compute a periodogram with the chosen statistic and return the
+        best-fit period, also setting ``self.period``.
+
         Parameters
         ----------
-        frequency: array-like
-            Frequencies evaluated in the periodogram.
-        power: array-like
-            Power at each frequency. Must have the same shape.
-            
+        statistic : {'hybrid', 'ls', 'ls_mb', 'lk'}, optional
+            Periodogram method to use.  Default is ``'hybrid'`` (Psi).
+        nbins : int, optional
+            Number of frequency bins for LK and hybrid.  Default is 1000.
+        minimum_frequency : float, optional
+        maximum_frequency : float, optional
+
         Returns
         -------
-        period: float
-            Most likely period.
-        error: float
-            Error based on the precision in the given frequencies.
+        period : float
+            Most likely period in days.
         """
-        
-        bestind = np.argmax(power)
-        period = 1./frequency[bestind]
-        
-        self.period = period # The period is an attribute of Variable, set it here too.
-        
-        error_f = np.abs(frequency[bestind-1]-frequency[bestind+1])
-        error = error_f / frequency[bestind]**2
-        
-        return period, error
+        fkw = dict(minimum_frequency=minimum_frequency,
+                   maximum_frequency=maximum_frequency)
+
+        if statistic == 'ls':
+            freq, stat = self.ls_periodogram(**fkw)
+            period = 1.0 / np.asarray(freq)[np.argmax(stat)]
+        elif statistic == 'ls_mb':
+            freq, stat = self.ls_mb_periodogram(**fkw)
+            period = 1.0 / np.asarray(freq)[np.argmax(stat)]
+        elif statistic == 'lk':
+            freq, stat = self.lk_periodogram(nbins=nbins, **fkw)
+            period = 1.0 / np.asarray(freq)[np.argmin(stat)]
+        elif statistic == 'hybrid':
+            freq, stat = self.psi_periodogram(nbins=nbins, **fkw)
+            period = 1.0 / np.asarray(freq)[np.argmax(stat)]
+        else:
+            raise ValueError(
+                f"Unknown statistic '{statistic}'. "
+                "Choose from 'ls', 'ls_mb', 'lk', 'hybrid'."
+            )
+
+        self.period = period
+        return period

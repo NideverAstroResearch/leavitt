@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import numba
 from astropy.timeseries import LombScargle, LombScargleMultiband
@@ -9,6 +10,12 @@ try:
     import psearch_pyc
 except ImportError:
     _cythonc = False
+    warnings.warn(
+        "psearch_pyc (Cython/C extension) not found or failed to import — "
+        "lk_periodogram will use the Numba JIT fallback, which is slower.",
+        ImportWarning,
+        stacklevel=2,
+    )
 
 
 def _ctheta_slave(parray, mag, tobs):
@@ -86,7 +93,7 @@ def frequency_array(minimum_frequency, maximum_frequency, nbins=100):
 
 
 def ls_periodogram(time, mag, mag_err, minimum_frequency, maximum_frequency,
-                   method='flexible', normalization='standard'):
+                   method='auto', normalization='standard'):
     """
     Compute a single-band Lomb-Scargle periodogram.
 
@@ -220,3 +227,65 @@ def lk_periodogram(time, mag, minimum_frequency, maximum_frequency, nbins=100):
         theta = _ctheta_slave_jit(parray, mag, tobs)
 
     return farray, theta
+
+
+def psi_periodogram(time, mag, band, mag_err, minimum_frequency, maximum_frequency, nbins=100):
+    """
+    Compute the Psi (Ψ) hybrid periodogram (Saha & Vivas 2017).
+
+    Combines the multi-band Lomb-Scargle power and the Lafler-Kinman
+    string-length statistic evaluated on the same frequency grid:
+
+        Ψ = 2 · LS_power / θ_LK
+
+    Peaks are reinforced where both statistics agree, suppressing 1-day
+    aliases (high LS power but poor phase coherence) and LK noise peaks.
+
+    Parameters
+    ----------
+    time : array-like
+        Observation times in days (plain floats, e.g. MJD).
+    mag : array-like
+        Magnitudes, co-aligned with ``time``.
+    band : array-like
+        Filter/band label for each observation.
+    mag_err : array-like
+        Magnitude uncertainties, co-aligned with ``time``.
+    minimum_frequency : float
+        Lower bound of the frequency search range (1/day).
+    maximum_frequency : float
+        Upper bound of the frequency search range (1/day).
+    nbins : int, optional
+        Number of trial frequencies.  Default is 100.
+
+    Returns
+    -------
+    frequency : ndarray
+        Frequencies evaluated (1/day).
+    psi : ndarray
+        Psi statistic at each frequency.  Higher values indicate a
+        stronger period detection.
+
+    References
+    ----------
+    Saha, A., & Vivas, A. K. 2017, AJ, 154, 231
+    """
+    farray = frequency_array(minimum_frequency, maximum_frequency, nbins)
+    farray_plain = np.asarray(farray, dtype=np.float64)
+    parray = 1.0 / farray_plain
+    tobs = np.asarray(time, dtype=np.float64)
+    mag_arr = np.asarray(mag, dtype=np.float64)
+
+    fy = np.asarray(
+        LombScargleMultiband(time, mag, band, dy=mag_err).power(
+            farray_plain, method='flexible', normalization='standard'
+        )
+    )
+
+    if _cythonc:
+        theta = psearch_pyc.ctheta_slave(parray, mag_arr, tobs)
+    else:
+        theta = _ctheta_slave_jit(parray, mag_arr, tobs)
+
+    psi = 2.0 * fy / theta
+    return farray, psi
