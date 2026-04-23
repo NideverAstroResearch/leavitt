@@ -15,7 +15,7 @@ from leavitt.timeseries import Variable
 
 OBJID = '48417_5977'
 TRUE_PERIOD = 0.3367        # days
-LK_NBINS    = 1000          # frequency resolution for LK search
+DPHI        = 0.02          # phase resolution for LK/hybrid grids
 TESTS_DIR   = Path(__file__).parent
 
 
@@ -40,7 +40,7 @@ def test_ls_period(star):
     Ground-based survey data has 1-day aliases that can outrank the true period
     in raw LS power, so we check the top 5 peaks rather than just the maximum.
     """
-    freq, power = star.ls_mb_periodogram()
+    freq, power = star.ls_mb_periodogram(method='flexible')
     freq_vals = np.asarray(freq)   # strip astropy units → plain ndarray
     top5_idx = np.argsort(power)[-5:]
     periods_top5 = 1.0 / freq_vals[top5_idx]
@@ -54,7 +54,7 @@ def test_ls_period(star):
 @pytest.mark.integration
 def test_lk_period(star):
     """Lafler-Kinman recovers the known period within tolerance."""
-    freq, theta = star.lk_periodogram(nbins=LK_NBINS)
+    freq, theta = star.lk_periodogram(dphi=DPHI)
     freq_vals = np.asarray(freq)   # strip astropy units → plain ndarray
     period = 1.0 / freq_vals[np.argmin(theta)]
     err = abs(period - TRUE_PERIOD) / TRUE_PERIOD
@@ -65,7 +65,7 @@ def test_lk_period(star):
 @pytest.mark.integration
 def test_psi_period(star):
     """Psi hybrid statistic recovers the known period."""
-    freq, psi = star.psi_periodogram(nbins=LK_NBINS)
+    freq, psi, _ = star.psi_periodogram(dphi=DPHI, ls_method='auto')
     freq_vals = np.asarray(freq)
     period = 1.0 / freq_vals[np.argmax(psi)]
     err = abs(period - TRUE_PERIOD) / TRUE_PERIOD
@@ -80,9 +80,9 @@ def test_psi_period(star):
 @pytest.mark.integration
 def test_plot_periodograms(star):
     """Save MB-LS, LK, and Psi periodograms to tests/periodograms.png."""
-    freq_ls, power = star.ls_mb_periodogram()
-    freq_lk, theta = star.lk_periodogram(nbins=LK_NBINS)
-    freq_psi, psi  = star.psi_periodogram(nbins=LK_NBINS)
+    freq_ls, power = star.ls_mb_periodogram(method='flexible')
+    freq_lk, theta = star.lk_periodogram(dphi=DPHI)
+    freq_psi, psi, thresh = star.psi_periodogram(dphi=DPHI, ls_method='auto')
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 10))
 
@@ -104,7 +104,8 @@ def test_plot_periodograms(star):
             title=f'Lafler-Kinman  —  {OBJID}')
     ax2.legend()
 
-    ax3.plot(np.log10(period_psi), psi, color='seagreen', lw=0.8)
+    ax3.plot(np.log10(period_psi), psi, color='seagreen', lw=0.8, label='Ψ')
+    ax3.plot(np.log10(period_psi), thresh, color='salmon', lw=0.8, ls='--', label='threshold')
     ax3.axvline(np.log10(TRUE_PERIOD), color='crimson', ls='--', lw=1.2,
                 label=f'True period ({TRUE_PERIOD} d)')
     ax3.set(xlabel='log Period [days]', ylabel='Ψ (higher = better)',
@@ -121,7 +122,7 @@ def test_plot_periodograms(star):
 @pytest.mark.integration
 def test_plot_phase_folded(star):
     """Save phase-folded light curve (all filters on one plot) to tests/phase_folded.png."""
-    period = star.get_period(statistic='hybrid', nbins=LK_NBINS)
+    period = star.get_period(statistic='hybrid', dphi=DPHI, ls_method='auto')
 
     ts   = star.timeseries
     mjd  = ts.time.mjd
