@@ -165,8 +165,9 @@ class Variable:
             True if the variable has a short period, False if not.
         """
         
-        if self.period!=None:
-            if self.period <= 10*u.day:
+        if self.period is not None:
+            period_days = self.period.to(u.day).value if hasattr(self.period, 'unit') else self.period
+            if period_days <= 10:
                 return True
             else:
                 return False
