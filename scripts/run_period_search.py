@@ -9,7 +9,7 @@ Usage
 -----
     python scripts/run_period_search.py samples/golden_RRab.txt
     python scripts/run_period_search.py samples/golden_RRab.txt -o results/rrab_periods.csv
-    python scripts/run_period_search.py samples/all_gold_sample.txt --workers 8 --nbins 2000
+    python scripts/run_period_search.py samples/all_gold_sample.txt --workers 8 --dphi 0.01
 
 Output columns: objid, period, n_obs, error
 """
@@ -25,11 +25,11 @@ from tqdm import tqdm
 from leavitt.timeseries import Variable
 
 
-def process_star(objid, statistic, nbins, sigma):
+def process_star(objid, statistic, dphi, ls_method, sigma):
     try:
         star = Variable(objid, datarelease='dr2', sigma=sigma)
         n_obs = len(star.timeseries)
-        period = star.get_period(statistic=statistic, nbins=nbins)
+        period = star.get_period(statistic=statistic, dphi=dphi, ls_method=ls_method)
         return objid, period, n_obs, None
     except Exception as e:
         return objid, None, None, str(e)
@@ -46,8 +46,10 @@ def main():
     parser.add_argument('--statistic', default='hybrid',
         choices=['hybrid', 'ls', 'ls_mb', 'lk'],
         help='Periodogram statistic (default: hybrid)')
-    parser.add_argument('--nbins', type=int, default=1000,
-        help='Frequency grid size for LK/hybrid (default: 1000)')
+    parser.add_argument('--dphi', type=float, default=0.02,
+        help='Phase resolution for LK/hybrid frequency grid (default: 0.02)')
+    parser.add_argument('--ls-method', default='fast', choices=['fast', 'flexible'],
+        help='MB-LS algorithm for hybrid statistic (default: fast)')
     parser.add_argument('--sigma', type=float, default=3.0,
         help='Sigma-clipping threshold per band (default: 3.0, 0 to disable)')
     parser.add_argument('--workers', type=int, default=4,
@@ -73,7 +75,7 @@ def main():
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Period search: {len(objids)} stars → {output_path}")
-    print(f"  statistic={args.statistic}  nbins={args.nbins}  "
+    print(f"  statistic={args.statistic}  dphi={args.dphi}  ls_method={args.ls_method}  "
           f"sigma={sigma}  workers={args.workers}\n")
 
     n_done = 0
@@ -85,7 +87,7 @@ def main():
 
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = {
-                pool.submit(process_star, objid, args.statistic, args.nbins, sigma): objid
+                pool.submit(process_star, objid, args.statistic, args.dphi, args.ls_method, sigma): objid
                 for objid in objids
             }
             with tqdm(total=len(objids), unit='star') as pbar:
