@@ -265,7 +265,7 @@ class Variable:
             band = utils.most_frequent(ts['filter'])
         sel = ts[np.asarray(ts['filter']) == band]
         return periodograms.ls_periodogram(
-            sel['time'], sel['mag'], sel['mag_err'],
+            sel.time.mjd, sel['mag'], sel['mag_err'],
             minimum_frequency, maximum_frequency,
             method=method, normalization=normalization,
         )
